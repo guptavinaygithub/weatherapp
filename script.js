@@ -1,84 +1,131 @@
+// Function to get weather data from Open-Meteo API
 async function getWeather(city) {
     try {
-        // First get coordinates for the city
-        const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
-        if (!geoResponse.ok) {
-            throw new Error(`Geocoding API error! status: ${geoResponse.status}`);
-        }
-        const geoData = await geoResponse.json();
-
-        if (!geoData.results || geoData.results.length === 0) {
-            throw new Error('City not found');
-        }
+        const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`);
+        const geoData = await geoRes.json();
+        if (!geoData.results || geoData.results.length === 0) throw new Error('City not found');
 
         const { latitude, longitude, name } = geoData.results[0];
 
-        // Then get weather data
-        const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&hourly=temperature_2m,relative_humidity_2m,windspeed_10m&timezone=auto`);
-        if (!weatherResponse.ok) {
-            throw new Error(`Weather API error! status: ${weatherResponse.status}`);
-        }
-        const weatherData = await weatherResponse.json();
+        const weatherRes = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+            `&current_weather=true&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto`
+        );
+        const weatherData = await weatherRes.json();
 
-        // Transform the data to match our expected format
         return {
+            city: name,
             temp: weatherData.current_weather.temperature,
-            humidity: weatherData.hourly.relative_humidity_2m ? weatherData.hourly.relative_humidity_2m[0] : 'N/A',
-            wind_speed: weatherData.current_weather.windspeed,
-            cloud_pct: 50, // Open-Meteo doesn't provide cloud percentage in free tier
-            city_name: name
+            wind: weatherData.current_weather.windspeed,
+            daily: weatherData.daily
         };
-    } catch (error) {
-        console.error('Error fetching weather data:', error);
+    } catch (err) {
+        console.error(err);
         return null;
     }
 }
 
-function displayWeather(data, city) {
-    const weatherContainer = document.getElementById('weather-container');
-    if (!data) {
-        weatherContainer.innerHTML = '<div class="alert alert-danger">Failed to fetch weather data. Please try again.</div>';
-        return;
-    }
-
-    const temp = data.temp;
-    const humidity = data.humidity;
-    const windSpeed = data.wind_speed;
-    const cityName = data.city_name || city;
-    const condition = data.cloud_pct > 50 ? 'Cloudy' : 'Clear'; // Simplified condition
-
-    weatherContainer.innerHTML = `
+function displayCurrentWeather(data) {
+    const currentWeather = document.getElementById('currentWeather');
+    currentWeather.innerHTML = `
         <div class="card">
             <div class="card-body">
-                <h2 class="card-title">${cityName}</h2>
-                <div class="row">
-                    <div class="col-md-6">
-                        <h3>${temp}°C</h3>
-                        <p class="text-muted">${condition}</p>
-                    </div>
-                    <div class="col-md-6">
-                        <p><strong>Humidity:</strong> ${humidity}%</p>
-                        <p><strong>Wind Speed:</strong> ${windSpeed} km/h</p>
-                    </div>
-                </div>
+                <h3>${data.city}</h3>
+                <p class="h4">${data.temp}°C</p>
+                <p>Wind: ${data.wind} km/h</p>
             </div>
         </div>
     `;
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    const searchForm = document.querySelector('form[role="search"]');
-    const searchInput = document.querySelector('input[type="search"]');
+function displayAlerts(data) {
+    const alertSection = document.getElementById('alertSection');
+    let alertHTML = '';
 
-    // Default city on load
-    getWeather('Seattle').then(data => displayWeather(data, 'Seattle'));
+    if (data.temp >= 40) {
+        alertHTML = `<div class="alert alert-danger">🔥 Heatwave Alert: Avoid outdoor work</div>`;
+    } else if (data.temp <= 5) {
+        alertHTML = `<div class="alert alert-warning">❄️ Cold Alert: Transport delays possible</div>`;
+    } else {
+        alertHTML = `<div class="alert alert-success">Weather Normal</div>`;
+    }
 
-    searchForm.addEventListener('submit', async function(e) {
+    alertSection.innerHTML = alertHTML;
+}
+
+function displayImpact(data) {
+    const impactText = document.getElementById('impactText');
+    let impact = 'Normal operations';
+
+    if (data.temp > 38) impact = "High heat may affect crop yield & worker productivity";
+    if (data.wind > 30) impact = "High wind may delay logistics and transportation";
+
+    impactText.innerText = impact;
+}
+
+function displayForecast(data) {
+    const forecastSection = document.getElementById('forecastSection');
+    forecastSection.innerHTML = '';
+
+    for (let i = 0; i < 7; i++) {
+        forecastSection.innerHTML += `
+        <div class="col-md-3 mb-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h6>${data.daily.time[i]}</h6>
+                    <p>Max: ${data.daily.temperature_2m_max[i]}°C</p>
+                    <p>Min: ${data.daily.temperature_2m_min[i]}°C</p>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+}
+
+async function displayComparison() {
+    const comparisonCities = ["Delhi", "Mumbai", "Bangalore"];
+    const comparisonTable = document.getElementById('comparisonTable');
+    comparisonTable.innerHTML = '';
+
+    for (let city of comparisonCities) {
+        const data = await getWeather(city);
+        if (!data) continue;
+
+        let risk = data.temp > 38 ? 'High' : 'Medium';
+        comparisonTable.innerHTML += `
+        <tr>
+            <td>${data.city}</td>
+            <td>${data.temp}°C</td>
+            <td>${data.wind} km/h</td>
+            <td>${risk}</td>
+        </tr>
+        `;
+    }
+}
+
+async function updateWeather(city) {
+    const data = await getWeather(city);
+    if (!data) {
+        alert('City not found or API error!');
+        return;
+    }
+
+    displayCurrentWeather(data);
+    displayAlerts(data);
+    displayImpact(data);
+    displayForecast(data);
+    displayComparison();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const searchForm = document.getElementById('searchForm');
+    const cityInput = document.getElementById('cityInput');
+
+    updateWeather('Seattle');
+
+    searchForm.addEventListener('submit', (e) => {
         e.preventDefault();
-        const city = searchInput.value.trim();
-        if (city) {
-            const data = await getWeather(city);
-            displayWeather(data, city);
-        }
+        const city = cityInput.value.trim();
+        if (city) updateWeather(city);
     });
 });
